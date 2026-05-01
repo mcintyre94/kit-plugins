@@ -2145,6 +2145,24 @@ Recommended order for landing the pieces described in this spec:
 
 Items explicitly considered during design and deferred. None are blocking, but each has a concrete motivation that may trigger revisiting.
 
+### `@solana/kit-react` — convenience meta-package
+
+The multi-package import story is the main friction point for new developers: a typical dApp needs imports from `@solana/react`, `kit-plugin-wallet/react`, `kit-plugin-rpc/react`, and `kit-plugin-instruction-plan/react` before writing any app logic, and the package names don't make it obvious where each hook lives.
+
+A thin meta-package (`@solana/kit-react` in kit-plugins) could address this — re-exporting all common React hooks from plugin subpaths with plugins as direct (not peer) dependencies:
+
+```ts
+export * from '@solana/react';
+export * from '@solana/kit-plugin-rpc/react';
+export * from '@solana/kit-plugin-wallet/react';
+export * from '@solana/kit-plugin-signer/react';
+export * from '@solana/kit-plugin-instruction-plan/react';
+```
+
+Developers who don't need fine-grained control install one package and import from one place. The individual packages remain the correct import for libraries and framework authors who want to declare minimal dependencies. The name `@solana/kit-react` is a natural search term for "Kit React bindings" and would surface this entry point where developers are most likely to look.
+
+Deferred pending feedback on whether the multi-package import story is a real pain point in practice — it may be adequately addressed by documentation alone.
+
 ### Promote the `subscribeTo<Capability>` producer-side helper to kit-core
 
 The consumer-facing shape (see [Signer access](#signer-access)) already lives in Kit — `ClientWithSubscribeToPayer` / `ClientWithSubscribeToIdentity` are exported from `@solana/kit`, and `kit-plugin-signer/react`'s `usePayer` / `useIdentity` duck-type against them. What's *not* yet shared is the **producer-side** machinery every reactive plugin needs to install a `subscribeTo<Capability>` hook: a listener registry, unsubscribe idempotency, and safe iteration during notify. Today `kit-plugin-wallet` hand-rolls this by forwarding its internal wallet store's `subscribe`; a second reactive plugin would have to re-derive the same ~20 lines of glue around `@solana/subscribable`'s existing `DataPublisher` / `ReactiveStore` primitives.
