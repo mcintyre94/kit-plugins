@@ -37,6 +37,8 @@
     - [Example: a DAS plugin package](#example-a-das-plugin-package)
     - [`useClientCapability` — runtime-checked third-party hooks](#useclientcapability--runtime-checked-third-party-hooks)
     - [`useClient<T>()` vs. `useClientCapability<T>()`](#useclientt-vs-useclientcapabilityt)
+- [`kit-plugin-rpc/react`](#kit-plugin-rpcreact)
+    - [Named hooks](#named-hooks)
 - [`kit-plugin-signer/react`](#kit-plugin-signerreact)
     - [Signer access](#signer-access)
     - [Getting a kit signer from a wallet account](#getting-a-kit-signer-from-a-wallet-account)
@@ -76,7 +78,7 @@
 
 A rewrite of the `@solana/react` package (in the kit repo) and a set of companion `/react` subpaths across kit-plugins packages. The core `@solana/react` package provides generic, wallet-agnostic primitives: `KitClientProvider`, `useClient`, `useClientCapability`, `useAction`, `useRequest`, `useSubscription`, and `useLiveData`. Two optional subpaths — `@solana/react/swr` and `@solana/react/query` — bridge those primitives into SWR and TanStack Query respectively (added later, after plugins, to validate the API).
 
-Plugin-specific hooks live in their plugin's own `/react` subpath: `kit-plugin-signer/react` exports `usePayer` and `useIdentity`; `kit-plugin-wallet/react` exports all wallet hooks (replaces the old `/wallet` subpath concept); `kit-plugin-instruction-plan/react` exports `useSendTransaction`, `usePlanTransaction`, and variants. `kit-plugin-rpc` has no `/react` subpath — its contribution is spec builders (`createBalanceLiveData`, `createAccountLiveData`, `createTransactionConfirmationLiveData`) in its main export, which have no React dependency and work with `useLiveData`, `useLiveSwr`, and `useLiveQuery` equally.
+Plugin-specific hooks live in their plugin's own `/react` subpath: `kit-plugin-signer/react` exports `usePayer` and `useIdentity`; `kit-plugin-wallet/react` exports all wallet hooks (replaces the old `/wallet` subpath concept); `kit-plugin-instruction-plan/react` exports `useSendTransaction`, `usePlanTransaction`, and variants; `kit-plugin-rpc/react` exports named hooks (`useBalance`, `useAccount`, `useTransactionConfirmation`) in three variants each — core (`useLiveData`-based), SWR, and TanStack Query. The `kit-plugin-rpc` main export retains the spec builders (`createBalanceLiveData`, `createAccountLiveData`, `createTransactionConfirmationLiveData`) which have no React dependency and serve as the escape hatch for custom cache layers or third-party framework integrations.
 
 The library is **client-first**: consumers build a Kit client with `createClient().use(...)` outside React and hand it to a single `KitClientProvider`. Plugin composition happens in plain Kit; React distributes the result. Any Kit plugin is usable without a React-specific wrapper.
 
@@ -178,6 +180,10 @@ With these in place, `@solana/react` is ~300 lines of bridge code. The rest of t
 │                                                      │
 │  kit-plugin-instruction-plan/react  (plugin subpath) │
 │  useSendTransaction, usePlanTransaction, …           │
+│                                                      │
+│  kit-plugin-rpc/react           (plugin subpath)     │
+│  useBalance, useAccount, useTransactionConfirmation  │
+│  + SWR and TanStack Query variants of each           │
 ├──────────────────────────────────────────────────────┤
 │  @solana/react                  (core entry)         │
 │  KitClientProvider (the only provider)               │
@@ -195,7 +201,7 @@ With these in place, `@solana/react` is ~300 lines of bridge code. The rest of t
 
 `@solana/react` is the generic, wallet-agnostic core. Plugin-specific hooks live in each plugin's own `/react` subpath — apps that don't use a user wallet (read-only dashboards, keypair-driven bots, server flows) install only `@solana/react` without pulling in wallet or instruction-plan React code. Each plugin subpath declares its plugin package as a peer dependency; the TypeScript surface only surfaces plugin-specific names to code that imports from that subpath.
 
-`kit-plugin-rpc` has no `/react` subpath: its contribution (`createBalanceLiveData`, `createAccountLiveData`, `createTransactionConfirmationLiveData`) are pure spec builders with no React dependency. They return a `LiveDataSpec` and work equally with `useLiveData`, `useLiveSwr`, and `useLiveQuery` — the cache layer is the caller's choice.
+`kit-plugin-rpc/react` exports named hooks (`useBalance`, `useAccount`, `useTransactionConfirmation`) in three variants each — core (built on `useLiveData`), SWR (built on `useLiveSwr`), and TanStack Query (built on `useLiveQuery`). The `kit-plugin-rpc` main export retains the spec builders (`createBalanceLiveData`, `createAccountLiveData`, `createTransactionConfirmationLiveData`) with no React dependency — they are the underlying implementation and the escape hatch for custom cache layers or third-party framework integrations.
 
 ### Principles
 
@@ -209,7 +215,7 @@ With these in place, `@solana/react` is ~300 lines of bridge code. The rest of t
 
 **Kit owns the state machines.** Lifecycle enums (`loading | loaded | error | retrying` for streams, `idle | running | success | error` for actions), abort semantics (double-click supersede on actions, retry-as-reconnection on streams), and stale-while-revalidate behavior all live in Kit primitives. `@solana/react` exposes them through `useSyncExternalStore`; it does not reimplement them. This keeps the React layer thin and the behavior consistent with any future Vue / Svelte / Solid binding.
 
-**Spec builders over named live-data hooks.** `createBalanceLiveData`, `createAccountLiveData`, `createTransactionConfirmationLiveData` are exported from `kit-plugin-rpc` (no React dependency). They return a `LiveDataSpec` consumed by `useLiveData`, `useLiveSwr`, and `useLiveQuery` equally. Named hooks like `useBalance` are not exported — they would be trivial wrappers (`useLiveData(createBalanceLiveData(...), deps)`) that add no non-trivial hook logic. The complexity is in the builder, and the builder is the right composition unit. Named hooks are only justified where there is non-trivial hook logic that can't be reduced to wrapping a spec builder.
+**Named hooks + spec builders in `kit-plugin-rpc`.** `useBalance`, `useAccount`, and `useTransactionConfirmation` are exported from `kit-plugin-rpc/react` in three variants each — core (built on `useLiveData`), SWR (built on `useLiveSwr`), and TanStack Query (built on `useLiveQuery`). All three are thin wrappers over spec builders (`createBalanceLiveData`, `createAccountLiveData`, `createTransactionConfirmationLiveData`) which live in the `kit-plugin-rpc` main export with no React dependency. The spec builders are the escape hatch for any other cache layer — if a team uses Jotai, Zustand, or some future library, they import the spec builder and compose it themselves. The named hooks earn their existence by hiding the RPC + subscription pairing, slot dedup, and response mapping — Solana-specific domain knowledge that developers shouldn't have to figure out. The three-variant pattern (core/SWR/Query) is bounded: there are only two supported cache adapters, so this is 9 hooks total across 3 data types, not an open-ended proliferation.
 
 **Adapters are read-only integration layers.** The SWR and TanStack Query adapters bridge `@solana/react`'s reactive state into those libraries' cache layers (dedupe across components, persistence, devtools, Suspense modes). They are read-only: no mutation hooks. Transactions go through `useSendTransaction` (from `kit-plugin-instruction-plan/react`) with manual `mutate()` / `invalidateQueries()` at the call site if cache invalidation is needed. One-shot reads no longer *require* a cache library — `useRequest` covers them natively — but apps that want shared cache semantics across many components can opt in.
 
@@ -914,16 +920,11 @@ function createTransactionConfirmationLiveData(
     };
 }
 
-// Spec builders are plain functions in kit-plugin-rpc.
-// Apps that want a named hook can write one trivially:
-//
-//   function useBalance(address: Address | null) {
-//       const client = useClient<ClientWithRpc & ClientWithRpcSubscriptions>();
-//       return useLiveData(
-//           () => address ? createBalanceLiveData(client, address) : null,
-//           [client, address],
-//       );
-//   }
+// Spec builders are plain functions in kit-plugin-rpc (no React dep).
+// kit-plugin-rpc/react exports named hooks built on top of these builders:
+//   useBalance, useBalanceSwr, useBalanceQuery
+//   useAccount, useAccountSwr, useAccountQuery
+//   useTransactionConfirmation, useTransactionConfirmationSwr, useTransactionConfirmationQuery
 ```
 
 Where the two static "empty" stores (`disabledLiveStore` for user-initiated disable, `nullLiveStore` for server render) and `useLiveStore` are internal helpers:
@@ -1638,6 +1639,22 @@ const client = useClient();
 const epochInfo = await client.rpc.getEpochInfo().send();
 ```
 
+## When plugins need React hooks
+
+The core primitives (`useRequest`, `useSubscription`, `useLiveData`, `useAction`) cover every plugin call pattern without any plugin-specific React code. A plugin warrants a `/react` subpath only when it has a case that falls into the last category below:
+
+| Pattern | Primitive to reach for | Plugin hook needed? |
+|---------|----------------------|---------------------|
+| **Plugin state** — reactive values from `client.X.subscribe` | `useSyncExternalStore`, or whatever `@solana/react` exposes for the relevant convention | No |
+| **Actions** — user-triggered operations | `useAction(() => client.plugin.method(), [client])` | No SWR/Query variant needed |
+| **Plain request** | `useRequest(() => client.plugin.method(), [client])` | No |
+| **Plain subscription** | `useSubscription((signal) => client.plugin.subscribe(), [client])` | No |
+| **Request + subscription with domain logic** | Named hook in plugin's `/react` subpath | **Yes** |
+
+The last category is where a named hook earns its existence. `kit-plugin-rpc` has three: `useBalance`, `useAccount`, `useTransactionConfirmation`. These hide RPC + subscription pairing, slot dedup, and response mapping — Solana-specific domain knowledge that developers shouldn't have to replicate every time they want a live balance.
+
+Most third-party plugins will have zero cases in that last category. A DAS plugin's `getAsset` is a plain request — consumers use `useRequest(() => client.das.getAsset(address), [client, address])` directly, with no named hook needed from the plugin author.
+
 ## Third-party extensions
 
 Any Kit plugin works with `@solana/react` out of the box — consumers install it on their client with `.use()` and read it back through `useClient()` or a typed convenience hook. No React-specific wrapper needed from the plugin author.
@@ -1715,6 +1732,114 @@ The TypeScript narrowing is still a caller-declared cast (same as `useClient<T>(
 ### `useClient<T>()` vs. `useClientCapability<T>()`
 
 `useClient<T>()` (shown in [Client access](#client-access)) is a pure cast — no runtime check. Use it when you specifically don't want the runtime check (e.g. testing code inspecting the raw client, or a hook that tolerates missing capabilities). In production hooks that depend on a specific plugin being installed, reach for `useClientCapability` first so the missing-provider failure surfaces at mount with a typed message instead of a cryptic crash at the call site.
+
+## `kit-plugin-rpc/react`
+
+### Dependencies
+
+```json
+{
+  "peerDependencies": {
+    "@solana/react": "^1.x",
+    "@solana/kit-plugin-rpc": "^1.x"
+  },
+  "peerDependenciesMeta": {
+    "swr": { "optional": true },
+    "@tanstack/react-query": { "optional": true }
+  }
+}
+```
+
+### Named hooks
+
+`kit-plugin-rpc/react` exports three named hooks in three variants each: a core variant built on `useLiveData`, an SWR variant built on `useLiveSwr`, and a TanStack Query variant built on `useLiveQuery`. All three variants are thin wrappers over the spec builders (`createBalanceLiveData`, `createAccountLiveData`, `createTransactionConfirmationLiveData`) which live in the `kit-plugin-rpc` main export with no React dependency.
+
+#### API
+
+```typescript
+// Core (useLiveData-based)
+function useBalance(address: Address | null): LiveQueryResult<Lamports>;
+
+function useAccount(address: Address | null): LiveQueryResult<MaybeEncodedAccount>;
+function useAccount<TData extends object>(address: Address | null, decoder: Decoder<TData>): LiveQueryResult<MaybeAccount<TData>>;
+
+function useTransactionConfirmation(
+    signature: Signature | null,
+    options?: { commitment?: Commitment },
+): LiveQueryResult<{ err: TransactionError | null; confirmationStatus: Commitment | null }>;
+
+// SWR variants
+function useBalanceSwr(key: SWRKey | null, address: Address | null): SWRResponse<Lamports>;
+
+function useAccountSwr(key: SWRKey | null, address: Address | null): SWRResponse<MaybeEncodedAccount>;
+function useAccountSwr<TData extends object>(key: SWRKey | null, address: Address | null, decoder: Decoder<TData>): SWRResponse<MaybeAccount<TData>>;
+
+function useTransactionConfirmationSwr(
+    key: SWRKey | null,
+    signature: Signature | null,
+    options?: { commitment?: Commitment },
+): SWRResponse<{ err: TransactionError | null; confirmationStatus: Commitment | null }>;
+
+// TanStack Query variants
+function useBalanceQuery(key: QueryKey, address: Address | null): UseQueryResult<Lamports>;
+
+function useAccountQuery(key: QueryKey, address: Address | null): UseQueryResult<MaybeEncodedAccount>;
+function useAccountQuery<TData extends object>(key: QueryKey, address: Address | null, decoder: Decoder<TData>): UseQueryResult<MaybeAccount<TData>>;
+
+function useTransactionConfirmationQuery(
+    key: QueryKey,
+    signature: Signature | null,
+    options?: { commitment?: Commitment },
+): UseQueryResult<{ err: TransactionError | null; confirmationStatus: Commitment | null }>;
+```
+
+#### Usage
+
+All three variants expose the same balance value — the difference is which cache layer backs it:
+
+```tsx
+// Core — per-hook reactive store, no cache library required
+const { data: balance } = useBalance(address);
+
+// SWR — cross-component dedup, devtools, persistence
+const { data: balance } = useBalanceSwr(['balance', address], address);
+
+// TanStack Query — shared cache, Suspense-capable, devtools
+const { data: balance } = useBalanceQuery(['balance', address], address);
+```
+
+#### Implementation
+
+The hooks are thin wrappers over the spec builders from the main `kit-plugin-rpc` export:
+
+```tsx
+function useBalance(address: Address | null): LiveQueryResult<Lamports> {
+    const client = useClientCapability<ClientWithRpc & ClientWithRpcSubscriptions>({
+        capability: ['rpc', 'rpcSubscriptions'],
+        hookName: 'useBalance',
+        providerHint: 'Install `solanaRpcConnection()` on the client.',
+    });
+    return useLiveData(
+        () => (address ? createBalanceLiveData(client, address) : null),
+        [client, address],
+    );
+}
+
+function useBalanceSwr(key: SWRKey | null, address: Address | null): SWRResponse<Lamports> {
+    const client = useClientCapability<ClientWithRpc & ClientWithRpcSubscriptions>({
+        capability: ['rpc', 'rpcSubscriptions'],
+        hookName: 'useBalanceSwr',
+        providerHint: 'Install `solanaRpcConnection()` on the client.',
+    });
+    return useLiveSwr(key, address ? createBalanceLiveData(client, address) : null);
+}
+
+// useBalanceQuery is equivalent, using useLiveQuery instead of useLiveSwr.
+```
+
+`useAccount` and `useTransactionConfirmation` follow the same pattern, wrapping `createAccountLiveData` and `createTransactionConfirmationLiveData` respectively.
+
+The spec builders remain in the `kit-plugin-rpc` main export as the escape hatch for custom cache layers (Jotai, Zustand, any future library) or third-party framework integrations. A team that wants Jotai-backed balance state imports `createBalanceLiveData` from `kit-plugin-rpc` directly and wires it up with their own store primitives — no React dependency required.
 
 ## SWR Adapter (`@solana/react/swr`)
 
@@ -1929,6 +2054,9 @@ const { data } = useRequestQuery(['epochInfo'], () => client.rpc.getEpochInfo())
 | Signer hooks | `kit-plugin-signer/react` | — | — |
 | Wallet hooks | `kit-plugin-wallet/react` | — | — |
 | Transaction hooks | `kit-plugin-instruction-plan/react` | — | — |
+| RPC named hooks (balance) | `useBalance` *(kit-plugin-rpc/react)* | `useBalanceSwr` *(kit-plugin-rpc/react)* | `useBalanceQuery` *(kit-plugin-rpc/react)* |
+| RPC named hooks (account) | `useAccount` *(kit-plugin-rpc/react)* | `useAccountSwr` *(kit-plugin-rpc/react)* | `useAccountQuery` *(kit-plugin-rpc/react)* |
+| RPC named hooks (tx confirmation) | `useTransactionConfirmation` *(kit-plugin-rpc/react)* | `useTransactionConfirmationSwr` *(kit-plugin-rpc/react)* | `useTransactionConfirmationQuery` *(kit-plugin-rpc/react)* |
 | Generic action bridge | `useAction` | `useActionSwr` | `useActionQuery` |
 | Suspense | — | ✅ | ✅ |
 | Devtools | — | ✅ | ✅ |
@@ -1942,7 +2070,7 @@ const { data } = useRequestQuery(['epochInfo'], () => client.rpc.getEpochInfo())
 
 **No per-RPC-method hooks.** Kit has dozens of RPC methods. Wrapping each in a hook adds maintenance surface without adding logic — `useRequest(() => client.rpc.getEpochInfo(), [client])` is the generic escape hatch and reads cleanly at the call site. A dedicated `useGetEpochInfo()` would save exactly the body of that factory function, at the cost of a ~50-hook surface to maintain in lockstep with Kit's RPC spec.
 
-**Spec builders over named live-data hooks.** `createBalanceLiveData`, `createAccountLiveData`, and `createTransactionConfirmationLiveData` are exported from `kit-plugin-rpc` (no React dep) rather than as named hooks (`useBalance`, `useAccount`, etc.). The domain logic — RPC + subscription pairing, slot dedup, response mapping, the `parseBase64RpcAccount` bridge — lives in the builder. A named hook would be `useLiveData(createBalanceLiveData(...), deps)`, a five-line wrapper that adds nothing beyond the builder. Crucially, shipping named hooks requires three variants each (`useBalance`, `useBalanceSwr`, `useBalanceQuery`) since the cache layer is the caller's choice. Builders sidestep that proliferation entirely: `useLiveSwr(key, createBalanceLiveData(client, addr))` and `useLiveQuery(key, createBalanceLiveData(client, addr))` work directly with no extra plugin surface.
+**Named hooks + spec builders in `kit-plugin-rpc`.** `useBalance`, `useAccount`, and `useTransactionConfirmation` are exported from `kit-plugin-rpc/react` in three variants each — core (built on `useLiveData`), SWR (built on `useLiveSwr`), and TanStack Query (built on `useLiveQuery`). All three are thin wrappers over spec builders (`createBalanceLiveData`, `createAccountLiveData`, `createTransactionConfirmationLiveData`) which live in the `kit-plugin-rpc` main export with no React dependency. The spec builders are the escape hatch for any other cache layer — if a team uses Jotai, Zustand, or some future library, they import the spec builder and compose it themselves. The named hooks earn their existence by hiding the RPC + subscription pairing, slot dedup, and response mapping — Solana-specific domain knowledge that developers shouldn't have to figure out. The three-variant pattern (core/SWR/Query) is bounded: there are only two supported cache adapters, so this is 9 hooks total across 3 data types, not an open-ended proliferation.
 
 **One-shot reads in core via `useRequest`.** Earlier drafts delegated one-shot reads entirely to SWR / TanStack on the reasoning that "plain React doesn't have a good data-fetching primitive." Once Kit ships `PendingRpcRequest.reactiveStore(): ReactiveActionStore` with eager auto-dispatch on creation, that reasoning stops applying — the primitive exists, one layer down. `useRequest` bridges the action store into `useSyncExternalStore` and surfaces `{ data, error, status, refresh }` with the same stale-while-revalidate semantics that the subscription hooks give. Consumers who want shared cache / Suspense / devtools still opt into the SWR / TanStack adapters; those who don't get a first-class read hook without pulling in a cache library.
 
@@ -1952,7 +2080,7 @@ const { data } = useRequestQuery(['epochInfo'], () => client.rpc.getEpochInfo())
 
 **Adapters are read-only integration layers.** The SWR and TanStack adapters bridge `@solana/react`'s reactive stores into those libraries' cache layers — `useSWRSubscription` for streams, `setQueryData` for live updates — plus `useRequestSwr` / `useRequestQuery` for cache-backed one-shot reads. No mutation hooks: subscriptions keep data fresh automatically after sends, and cache invalidation for any remaining non-subscribed keys belongs at the call site (`mutate(key)` / `invalidateQueries(key)` after `useSendTransaction`). They don't re-implement the Kit-side state machines; they pipe `subscribe` / `getUnifiedState` into the cache library's existing APIs.
 
-**Plugin React hooks are optional.** Any Kit plugin works with `@solana/react` the moment a consumer calls `.use()` on it — core's generic hooks (`useRequest(() => client.myPlugin.foo())`, `useLiveData(...)`, `useSubscription(...)`, `useAction(...)`, or the `useClient()` escape hatch) cover the consumer-facing side. Plugin authors don't need to ship React bindings for their plugin to be usable — core provides enough primitives for consumers to build whatever hook shape they need against any plugin. A `/react` subpath is a DX upgrade, not a prerequisite — it lets plugin authors reduce boilerplate and attach a stable error story via `useClientCapability`. Plugins that do ship a `/react` subpath export hooks where there is non-trivial hook logic (`usePayer`/`useIdentity`, wallet hooks, `useSendTransaction`); plugins whose complexity lives entirely in framework-agnostic builders (like `kit-plugin-rpc`) don't need one at all.
+**Plugin React hooks are optional for most plugins.** Any Kit plugin works with `@solana/react` the moment a consumer calls `.use()` on it — core's generic hooks (`useRequest(() => client.myPlugin.foo())`, `useLiveData(...)`, `useSubscription(...)`, `useAction(...)`, or the `useClient()` escape hatch) cover the consumer-facing side. Plugin authors don't need to ship React bindings for their plugin to be usable — core provides enough primitives for consumers to build whatever hook shape they need against any plugin. A `/react` subpath is a DX upgrade, not a prerequisite — it lets plugin authors reduce boilerplate and attach a stable error story via `useClientCapability`. Plugins that do ship a `/react` subpath export hooks where there is non-trivial hook logic: `usePayer`/`useIdentity` in `kit-plugin-signer/react`, wallet hooks in `kit-plugin-wallet/react`, `useSendTransaction` in `kit-plugin-instruction-plan/react`, and `useBalance`/`useAccount`/`useTransactionConfirmation` (in three cache-layer variants each) in `kit-plugin-rpc/react`. The rule is: request + subscription with Solana-specific domain logic warrants a named hook; plain requests, plain subscriptions, and actions do not. See [When plugins need React hooks](#when-plugins-need-react-hooks).
 
 **`{ data, error, status, retry }` rather than Suspense / Error Boundaries.** Live-data hooks return a reactive snapshot shape (mirroring Kit's `ReactiveState<T>` with an added `'disabled'` variant) instead of suspending or throwing.
 
@@ -1991,9 +2119,27 @@ if (error) {
 
 **No dedicated transfer/token/stake hooks.** `useSendTransaction()` is generic — it accepts any instruction, instruction plan, or transaction message. Dedicated hooks like `useSolTransfer()` or `useSplToken()` would be thin wrappers that don't add meaningful logic. They can be built on top by higher-level libraries.
 
-**Transaction confirmation is subscription-backed.** `createTransactionConfirmationLiveData` (from `kit-plugin-rpc`) uses `signatureNotifications` + `getSignatureStatuses` with slot-based dedup, rather than polling. The domain logic lives in the builder; callers choose their hook: `useLiveData`, `useLiveSwr`, or `useLiveQuery`.
+**Transaction confirmation is subscription-backed.** `createTransactionConfirmationLiveData` (from `kit-plugin-rpc`) uses `signatureNotifications` + `getSignatureStatuses` with slot-based dedup, rather than polling. The domain logic lives in the builder; `kit-plugin-rpc/react` wraps it in `useTransactionConfirmation`, `useTransactionConfirmationSwr`, and `useTransactionConfirmationQuery` for the three common cache layers. Teams with a custom cache layer import the spec builder directly.
 
 **Signer hooks duck-type on a per-capability subscribe convention.** `usePayer` / `useIdentity` (in `kit-plugin-signer/react`) don't reach for `client.wallet.subscribe` directly. Instead, a per-capability convention: whoever installs `client.payer` can optionally install `client.subscribeToPayer(listener)` alongside it (same for `identity`). The hook observes that sibling if present, otherwise falls back to a no-op subscribe. This keeps signer hooks wallet-agnostic, supports future reactive plugins for free, and avoids a global `client.subscribe` bus that would cause over-rendering. Static plugins like `payer()` / `identity()` / `signer()` from `@solana/kit-plugin-signer` participate implicitly by not installing a subscribe hook — the value never changes, so nothing needs to fire.
+
+## Implementation Sequencing
+
+Recommended order for landing the pieces described in this spec:
+
+**Step 1 — Prerequisites (Kit + kit-plugins, no React).** Land the framework-agnostic primitives described in [Prerequisites](#prerequisites): `ReactiveStreamStore` / `ReactiveActionStore` in `@solana/subscribable`, `.reactiveStore()` on `PendingRpcSubscriptionsRequest` and `PendingRpcRequest`, `createReactiveStoreWithInitialValueAndSlotTracking` in `@solana/kit`, and signal-aware wallet operations in `kit-plugin-wallet`. These unblock all React work without any React dependency.
+
+**Step 2a — `kit-plugin-rpc` additions.** Two parallel deliverables with no React dependency between them:
+- **Spec builders in main export** (`createBalanceLiveData`, `createAccountLiveData`, `createTransactionConfirmationLiveData`). No React dependency; usable immediately with `useLiveData` / `useLiveSwr` / `useLiveQuery` once Step 3 lands.
+- **`kit-plugin-rpc/react` subpath** with named hooks (`useBalance`, `useAccount`, `useTransactionConfirmation`) in three variants each (core, SWR, TanStack Query). Depends on Step 3 for `useLiveData` / `useLiveSwr` / `useLiveQuery`.
+
+**Step 2b — `kit-plugin-wallet` additions.** The `subscribeToPayer` / `subscribeToIdentity` publish points and the `walletSigner` / `walletPayer` / `walletIdentity` / `walletWithoutSigner` plugins. Needed by Step 3's `usePayer` / `useIdentity` and the wallet hooks.
+
+**Step 3 — `@solana/react` core.** `KitClientProvider`, `useClient`, `useClientCapability`, `useAction`, `useRequest`, `useSubscription`, `useLiveData`. Depends on Steps 1, 2a (spec builders), and 2b.
+
+**Step 4 — Plugin `/react` subpaths.** `kit-plugin-signer/react` (`usePayer`, `useIdentity`), `kit-plugin-wallet/react` (all wallet hooks), `kit-plugin-instruction-plan/react` (`useSendTransaction`, `usePlanTransaction`, variants). `kit-plugin-rpc/react` (from Step 2a) can land here too if the subpath wasn't shipped earlier. All depend on Step 3.
+
+**Step 5 — SWR and TanStack Query adapters** (`@solana/react/swr`, `@solana/react/query`). Add `useLiveSwr`, `useLiveQuery`, `useSubscriptionSwr`, `useSubscriptionQuery`, `useRequestSwr`, `useRequestQuery`. Land these after Step 3 to validate the `LiveDataSpec` API surface against real cache integrations before freezing it.
 
 ## Future directions
 
@@ -2054,10 +2200,10 @@ All of framework-kit's core functionality is covered:
 | Wallet connection | `useWallet`, `useWalletSession`, `useConnectWallet`, `useDisconnectWallet` | `useWalletStatus`, `useConnectedWallet`, `useConnectWallet`, `useDisconnectWallet` *(kit-plugin-wallet/react)* |
 | Wallet discovery | Via `autoDiscover()` + connectors | `useWallets()` *(kit-plugin-wallet/react)* |
 | Auto-connect | `SolanaProvider` walletPersistence config | `walletSigner({ autoConnect })` plugin config |
-| Balance | `useBalance()` (SWR polling) | `useLiveSwr(key, createBalanceLiveData(client, addr))` (subscription-backed) |
-| Account data | `useAccount()` | `useLiveData(() => createAccountLiveData(client, addr), deps)` with optional decoder |
+| Balance | `useBalance()` (SWR polling) | `useBalanceSwr(['balance', addr], addr)` *(kit-plugin-rpc/react)* (subscription-backed; `createBalanceLiveData` is the lower-level spec builder) |
+| Account data | `useAccount()` | `useAccount(addr)` or `useAccountSwr(key, addr)` *(kit-plugin-rpc/react)* with optional decoder |
 | Send transaction | `useSendTransaction()` | `useSendTransaction()` *(kit-plugin-instruction-plan/react)* |
-| Signature tracking | `useSignatureStatus()` + `useWaitForSignature()` | `useLiveData(() => createTransactionConfirmationLiveData(...), deps)` (subscription-backed) |
+| Signature tracking | `useSignatureStatus()` + `useWaitForSignature()` | `useTransactionConfirmation(sig)` or `useTransactionConfirmationSwr(key, sig)` *(kit-plugin-rpc/react)* (subscription-backed; `createTransactionConfirmationLiveData` is the lower-level spec builder) |
 | Client access | `useClientStore(selector)` | `useClient()` |
 
 #### Intentional gaps
@@ -2095,7 +2241,7 @@ Features that framework-kit does not provide:
 | Wallet status | `useWallet()` (discriminated union) | `useWalletStatus()` + `useConnectedWallet()` *(kit-plugin-wallet/react)* |
 | Connect / disconnect | `useConnectWallet()` / `useDisconnectWallet()` | `useConnectWallet()` / `useDisconnectWallet()` *(kit-plugin-wallet/react)* |
 | Auto-connect | Config-driven, 200ms delay, silent-first | `walletSigner({ autoConnect })` plugin config |
-| Balance | `useBalance()` (polling + cache) | `useLiveSwr(key, createBalanceLiveData(client, addr))` (subscription-backed) |
+| Balance | `useBalance()` (polling + cache) | `useBalanceSwr(['balance', addr], addr)` *(kit-plugin-rpc/react)* (subscription-backed; `createBalanceLiveData` is the lower-level spec builder) |
 | Sign message | Via `signer.signMessage()` | `useSignMessage()` *(kit-plugin-wallet/react)* |
 | Sign In With Solana | Not built-in | `useSignIn()` *(kit-plugin-wallet/react)* |
 | Transaction sending | `useTransactionSigner()` / `useKitTransactionSigner()` | `useSendTransaction()` *(kit-plugin-instruction-plan/react)* |
@@ -2327,14 +2473,13 @@ const connected = useConnectedWallet();
 
 **Today** — a custom `balanceSubscribe` function (~40 lines) that manually creates a `createReactiveStoreWithInitialValueAndSlotTracking` (a `ReactiveStreamStore`), manages `AbortController` lifecycle, bridges into SWR via `useSWRSubscription`, and tracks seen errors with a `WeakSet` to avoid duplicate dialogs.
 
-**With `@solana/react` + `kit-plugin-rpc`:**
+**With `@solana/react` + `kit-plugin-rpc/react`:**
 
 ```tsx
-const { data: balance, error, isLoading } = useLiveSwr(
-    ['balance', address],
-    createBalanceLiveData(client, address),
-);
+const { data: balance, error, isLoading } = useBalanceSwr(['balance', address], address);
 ```
+
+For custom cache layers or non-SWR setups, `createBalanceLiveData` (from `kit-plugin-rpc`) is the lower-level spec builder that plugs directly into `useLiveData`, `useLiveSwr`, or `useLiveQuery`.
 
 #### Transaction sending
 
@@ -2390,7 +2535,7 @@ const { data: slot } = useSubscription(
 |------|-------------------|-----------|
 | Provider setup | 3 custom contexts, localStorage sync, manual RPC creation | 1 provider + plain `createClient().use(...)` composition |
 | Wallet UI | ~100 lines, manual feature filtering | Hooks from `kit-plugin-wallet/react` + your own UI |
-| Balance | ~50 lines, SWR + reactive store + AbortController + WeakSet | `useLiveSwr(key, createBalanceLiveData(client, addr))` |
+| Balance | ~50 lines, SWR + reactive store + AbortController + WeakSet | `useBalanceSwr(['balance', addr], addr)` *(kit-plugin-rpc/react)* |
 | Transaction (×3 types) | 150–350 lines each, manual state machines | `useSendTransaction()` from `kit-plugin-instruction-plan/react` |
 | Subscriptions | Manual reactive store + useSyncExternalStore + AbortController | `useSubscription()` |
 | **Total custom code** | **~1,200 lines** | **Focus on app-specific logic** |
